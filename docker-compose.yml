@@ -1,0 +1,157 @@
+version: '3.2'
+
+services:
+  elasticsearch:
+    build:
+      context: elasticsearch/
+      args:
+        ELK_VERSION: $ELK_VERSION
+    volumes:
+      - type: bind
+        source: ./elasticsearch/config/elasticsearch.yml
+        target: /usr/share/elasticsearch/config/elasticsearch.yml
+        read_only: true
+      - type: volume
+        source: elasticsearch
+        target: /usr/share/elasticsearch/data
+    ports:
+      - "9200:9200"
+      - "9300:9300"
+    environment:
+      ES_JAVA_OPTS: "-Xmx256m -Xms256m"
+      ELASTIC_PASSWORD: changeme
+    networks:
+      - elk
+
+  logstash:
+    build:
+      context: logstash/
+      args:
+        ELK_VERSION: $ELK_VERSION
+    volumes:
+      - type: bind
+        source: ./logstash/config/logstash.yml
+        target: /usr/share/logstash/config/logstash.yml
+        read_only: true
+      - type: bind
+        source: ./logstash/pipeline
+        target: /usr/share/logstash/pipeline
+        read_only: true
+    ports:
+      - "5000:5000"
+      - "9600:9600"
+    environment:
+      LS_JAVA_OPTS: "-Xmx256m -Xms256m"
+    networks:
+      - elk
+    depends_on:
+      - elasticsearch
+
+  kibana:
+    build:
+      context: kibana/
+      args:
+        ELK_VERSION: $ELK_VERSION
+    volumes:
+      - type: bind
+        source: ./kibana/config/kibana.yml
+        target: /usr/share/kibana/config/kibana.yml
+        read_only: true
+    ports:
+      - "5601:5601"
+    networks:
+      - elk
+    depends_on:
+      - elasticsearch
+
+  traefik:
+    image: traefik:latest
+    ports:
+      - 80:80
+      - 443:443
+      - 5001:443
+      - 8080:8080
+      - 10080:8080
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ./traefik/traefik.toml:/traefik.toml
+      - ./traefik/acme.json:/acme.json
+    restart: always
+    networks:
+      - elk
+
+  filebeat:
+    build:
+      context: filebeat/
+    volumes:
+      - ./filebeat/config/filebeat.yml:/usr/share/filebeat/config/filebeat.yml:ro
+      - ./filebeat/prospectors.d:/usr/share/filebeat/prospectors.d
+      - ./filebeat/temp:/usr/share/filebeat/temp
+      - ./filebeat/modules.d:/modules.d
+      - /mounts:/etc/logs:ro
+      - /etc/localtime:/etc/localtime:ro
+    environment:
+      TZ: "Europe/Berlin"
+    networks:
+      - elk
+    restart: always
+    depends_on:
+      - kibana
+
+  elastalert:
+    build:
+      context: elastalert/
+    volumes:
+      - ./elastalert/config/config.yaml:/home/elastalert/config.yaml
+      - ./elastalert/rules:/home/elastalert/rules
+      - ./elastalert/rule_templates:/home/elastalert/rule_templates
+      - /etc/localtime:/etc/localtime:ro
+    ports:
+      - "3030:3030"
+    networks:
+      - elk
+    restart: always
+    depends_on:
+      - kibana
+
+  metricbeat:
+    build:
+      context: metricbeat/
+    volumes:
+      - ./metricbeat/config/metricbeat.yml:/usr/share/metricbeat/config/metricbeat.yml:ro
+      - /proc:/hostfs/proc:ro
+      - /sys/fs/cgroup:/hostfs/sys/fs/cgroup:ro
+      - /:/hostfs:ro
+      - /var/run/docker.sock:/var/run/docker.sock
+      - /etc/localtime:/etc/localtime:ro
+    networks:
+      - elk
+    restart: always
+    depends_on:
+      - elasticsearch
+
+  curator:
+    build:
+     context: curator/
+    environment:
+      ELASTICSEARCH_HOST: elasticsearch
+      ELASTICSEARCH_PORT: 9200
+      S3_BUCKET_NAME: old-elasticsearch-indices
+      S3_BUCKET_REGION: eu-central-1
+      OPTIMIZE_EVERY: 1
+      COPY_TO_S3_AFTER: 3
+      MAX_INDEX_AGE: 10
+      TZ: "Europe/Berlin"
+    restart: always
+    networks:
+      - elk
+    depends_on:
+      - elasticsearch
+
+      
+networks:
+  elk:
+    driver: bridge
+
+volumes:
+  elasticsearch:

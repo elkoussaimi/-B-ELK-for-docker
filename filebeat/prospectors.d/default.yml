@@ -1,0 +1,10 @@
+- type: log
+  paths:
+    - /etc/logs/*.log
+  scan_frequency: 5s
+
+
+- type: log
+  paths:
+    - /etc/logs/*.txt
+  scan_frequency: 5s
